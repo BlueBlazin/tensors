@@ -45,7 +45,7 @@ pub enum Device {
     Cpu,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Storage<T: TensorElement> {
     Cpu(RefCell<Vec<T>>),
 }
@@ -76,6 +76,12 @@ impl<T: TensorElement> Storage<T> {
             Self::Cpu(data) => data.borrow().len(),
         }
     }
+
+    pub fn clone_storage(&self) -> Self {
+        match self {
+            Self::Cpu(data) => Self::Cpu(data.clone()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -83,6 +89,7 @@ pub struct Tensor<T: TensorElement, const DIMS: usize> {
     data: Rc<Storage<T>>,
     shape: Vec<usize>,
     strides: Vec<usize>,
+    is_contiguous: bool,
 }
 
 impl<T: TensorElement, const DIMS: usize> Tensor<T, DIMS> {
@@ -95,6 +102,7 @@ impl<T: TensorElement, const DIMS: usize> Tensor<T, DIMS> {
             data: Rc::new(Storage::new(vec![value; length], Device::Cpu)),
             shape: shape.to_vec(),
             strides,
+            is_contiguous: true,
         }
     }
 
@@ -113,6 +121,7 @@ impl<T: TensorElement, const DIMS: usize> Tensor<T, DIMS> {
             data: Rc::new(Storage::new(data.to_vec(), Device::Cpu)),
             shape: shape.to_vec(),
             strides,
+            is_contiguous: true,
         }
     }
 
@@ -124,6 +133,7 @@ impl<T: TensorElement, const DIMS: usize> Tensor<T, DIMS> {
             data: Rc::clone(&self.data),
             shape,
             strides,
+            is_contiguous: false,
         }
     }
 
@@ -135,10 +145,17 @@ impl<T: TensorElement, const DIMS: usize> Tensor<T, DIMS> {
         );
         let strides = suffix_prod(shape);
 
+        let data = if self.is_contiguous {
+            Rc::clone(&self.data)
+        } else {
+            Rc::new(self.data.clone_storage())
+        };
+
         Tensor {
-            data: Rc::clone(&self.data),
+            data,
             shape: shape.to_vec(),
             strides,
+            is_contiguous: true,
         }
     }
 
@@ -186,60 +203,6 @@ impl<T: TensorElement, const DIMS: usize> Tensor<T, DIMS> {
     //     );
     // }
 }
-
-// impl<T: TensorElement, const DIMS: usize> Index<[usize; DIMS]> for Tensor<T, DIMS> {
-//     type Output = T;
-
-//     fn index(&self, index: [usize; DIMS]) -> &Self::Output {
-//         assert!(
-//             index.iter().enumerate().all(|(i, n)| n < &self.shape[i]),
-//             "Index out of range. Invalid index {:?} for Tensor with shape {:?}.",
-//             &index,
-//             &self.shape
-//         );
-
-//         let data_index: usize = index
-//             .iter()
-//             .enumerate()
-//             .map(|(i, n)| n * self.strides[i])
-//             .sum();
-
-//         &self.data.get_mut().unwrap()[data_index]
-//     }
-// }
-
-// impl<T: TensorElement> Index<usize> for Tensor<T, 1> {
-//     type Output = T;
-
-//     fn index(&self, index: usize) -> &Self::Output {
-//         &self.data[index]
-//     }
-// }
-
-// impl<T: TensorElement, const DIMS: usize> IndexMut<[usize; DIMS]> for Tensor<T, DIMS> {
-//     fn index_mut(&mut self, index: [usize; DIMS]) -> &mut Self::Output {
-//         assert!(
-//             index.iter().enumerate().all(|(i, n)| n < &self.shape[i]),
-//             "Index out of range. Invalid index {:?} for Tensor with shape {:?}.",
-//             &index,
-//             &self.shape
-//         );
-
-//         let data_index: usize = index
-//             .iter()
-//             .enumerate()
-//             .map(|(i, n)| n * self.strides[i])
-//             .sum();
-
-//         &mut Arc::get_mut(&mut self.data).unwrap()[data_index]
-//     }
-// }
-
-// impl<T: TensorElement> IndexMut<usize> for Tensor<T, 1> {
-//     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-//         &mut Arc::get_mut(&mut self.data).unwrap()[index]
-//     }
-// }
 
 impl<T: TensorElement, const DIMS: usize> Display for Tensor<T, DIMS> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
