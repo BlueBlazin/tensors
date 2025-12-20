@@ -8,9 +8,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut x: Tensor<f32, 1> = Tensor::from_data(&data, &[6]);
-    let mut y = x.reshape(&[3, 2]);
+    let y = x.reshape(&[3, 2]);
     println!("{}", x);
-    x[0] = 42.0;
+    x.set(&[0], 42.0);
     println!("{}", x);
     println!("{}", y);
 
