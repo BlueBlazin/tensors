@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display};
 use std::ops::{Add, Div, Mul, Range, RangeFrom, RangeFull, RangeTo, Sub};
@@ -153,92 +154,47 @@ impl From<RangeTo<usize>> for Ax {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Broadcast {
-    Split(usize),
-    Splat(usize),
-}
-
-fn broadcast_shape(shape: &[usize], other: &[usize]) -> Vec<usize> {
+fn broadcast_shape(shape: &[usize], other: &[usize]) -> Result<Vec<usize>, &'static str> {
     let m = shape.len();
     let n = other.len();
-    let diff = m.abs_diff(n);
+    let length = m.max(n);
 
-    let mut new_shape: Vec<usize> = shape
-        .iter()
-        .rev()
-        .zip(other.iter().rev())
-        .map(|(&x, &y)| x.max(y))
-        .collect();
+    let mut new_shape = Vec::with_capacity(length);
 
-    if m > n {
-        new_shape.extend_from_slice(&shape[0..diff]);
-    } else {
-        new_shape.extend_from_slice(&other[0..diff]);
-    }
+    for i in 0..length {
+        let x = m.checked_sub(length - i).map(|j| shape[j]).unwrap_or(1);
+        let y = n.checked_sub(length - i).map(|j| other[j]).unwrap_or(1);
 
-    new_shape.reverse();
-    new_shape
-}
-
-fn broadcast_actions(shape: &[usize], other: &[usize]) -> Result<Vec<Broadcast>, &'static str> {
-    let m = shape.len();
-    let n = other.len();
-
-    let mut actions = vec![];
-
-    let mut i: isize = m as isize - 1;
-    let mut j: isize = n as isize - 1;
-    while i >= 0 && j >= 0 {
-        if shape[i as usize] == other[j as usize] || other[j as usize] == 1 {
-            actions.push(Broadcast::Split(shape[i as usize]));
-        } else if shape[i as usize] == 1 {
-            actions.push(Broadcast::Splat(other[j as usize]));
+        if x == y || x == 1 || y == 1 {
+            new_shape.push(x.max(y));
         } else {
             return Err("Operands could not be broadcast together.");
         }
-
-        i -= 1;
-        j -= 1;
     }
 
-    while i >= 0 {
-        actions.push(Broadcast::Split(shape[i as usize]));
-        i -= 1;
-    }
-
-    while j >= 0 {
-        actions.push(Broadcast::Splat(other[j as usize]));
-        j -= 1;
-    }
-
-    actions.reverse();
-    Ok(actions)
+    Ok(new_shape)
 }
 
-/// Uses the splits and splats from a previous step to generate ranges/segments
-/// which broadcast the correct parts from the flat data array. The sum of the lengths
-/// of these ranges equals the max flat data length of both Tensors being broadcast.
-fn generate_segments(actions: &[Broadcast], length: usize) -> Vec<(usize, usize)> {
-    let mut segments = vec![(0, length - 1)];
-    for &action in actions {
-        let next_segments = segments
-            .iter()
-            .flat_map(|(start, end)| match action {
-                Broadcast::Split(n) => {
-                    let size = (end - start + 1) / n;
-                    (0..n)
-                        .map(|i| (start + i * size, start + i * size + size - 1))
-                        .collect::<Vec<_>>()
-                }
-                Broadcast::Splat(n) => std::iter::repeat((*start, *end)).take(n).collect(),
-            })
-            .collect();
+fn broadcast_strides(strides: &[usize], shape: &[usize], target_shape: &[usize]) -> Vec<usize> {
+    let m = shape.len();
+    let n = target_shape.len();
+    let diff = m.abs_diff(n);
 
-        segments = next_segments;
+    let mut new_strides: Vec<usize> = shape
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, &x)| if x == 1 { 0 } else { strides[i] })
+        .collect();
+
+    if m > n {
+        new_strides.extend_from_slice(&strides[0..diff]);
+    } else {
+        new_strides.extend_from_slice(&vec![0; diff]);
     }
 
-    segments
+    new_strides.reverse();
+    new_strides
 }
 
 #[macro_export]
@@ -334,6 +290,7 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
+    #[inline]
     pub fn i(&self, index: &[usize]) -> T {
         assert!(
             index.iter().enumerate().all(|(i, n)| n < &self.shape[i]),
@@ -342,9 +299,15 @@ impl<T: TensorElement> Tensor<T> {
             &self.shape
         );
 
-        self.data.get(self.data_index(index))
+        self.get(index, &self.strides)
     }
 
+    #[inline(always)]
+    fn get(&self, index: &[usize], strides: &[usize]) -> T {
+        self.data.get(self.broadcast_data_index(index, strides))
+    }
+
+    #[inline]
     pub fn set(&mut self, index: &[usize], value: T) {
         assert!(
             index.iter().enumerate().all(|(i, n)| n < &self.shape[i]),
@@ -358,11 +321,16 @@ impl<T: TensorElement> Tensor<T> {
 
     #[inline(always)]
     fn data_index(&self, index: &[usize]) -> usize {
+        self.broadcast_data_index(index, &self.strides)
+    }
+
+    #[inline(always)]
+    fn broadcast_data_index(&self, index: &[usize], strides: &[usize]) -> usize {
         self.offset
             + index
                 .iter()
                 .enumerate()
-                .map(|(i, n)| n * self.strides[i])
+                .map(|(i, n)| n * strides[i])
                 .sum::<usize>()
     }
 
@@ -407,59 +375,6 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
-    fn broadcast(&self, other_shape: &[usize]) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
-        let m = self.data.len();
-        let n = other_shape.iter().product();
-
-        let self_actions = broadcast_actions(&self.shape, other_shape).unwrap();
-        let mut self_segments = generate_segments(&self_actions, m);
-
-        let other_actions = broadcast_actions(other_shape, &self.shape).unwrap();
-        let mut other_segments = generate_segments(&other_actions, n);
-
-        let mut self_chunks = vec![];
-        let mut other_chunks = vec![];
-
-        let mut start = 0;
-        let end = m.max(n);
-
-        let mut i = 0;
-        let mut j = 0;
-
-        assert_eq!(self_segments[0].0, 0);
-        assert_eq!(other_segments[0].0, 0);
-
-        while start < end {
-            let (left1, right1) = self_segments[i];
-            let (left2, right2) = other_segments[j];
-
-            let length1 = right1 - left1 + 1;
-            let length2 = right2 - left2 + 1;
-
-            if length1 < length2 {
-                self_chunks.push((left1, right1));
-                other_chunks.push((left2, left2 + length1 - 1));
-                other_segments[j].0 = left2 + length1 - 1;
-                i += 1;
-                start += length1;
-            } else if length1 > length2 {
-                other_chunks.push((left2, right2));
-                self_chunks.push((left1, left1 + length2 - 1));
-                self_segments[i].0 = left1 + length2 - 1;
-                j += 1;
-                start += length2;
-            } else {
-                self_chunks.push((left1, right1));
-                other_chunks.push((left2, right2));
-                i += 1;
-                j += 1;
-                start += length1;
-            }
-        }
-
-        (self_chunks, other_chunks)
-    }
-
     pub fn add(&self, other: &Tensor<T>) -> Tensor<T> {
         assert_eq!(
             self.data.device(),
@@ -469,19 +384,17 @@ impl<T: TensorElement> Tensor<T> {
             other.data.device(),
         );
 
-        let (chunks1, chunks2) = self.broadcast(&other.shape);
+        let shape = broadcast_shape(&self.shape, &other.shape).unwrap();
 
-        let data: Vec<_> = chunks1
-            .into_iter()
-            .zip(chunks2.into_iter())
-            .flat_map(|((start1, end1), (start2, end2))| {
-                (start1..end1 + 1)
-                    .zip(start2..end2 + 1)
-                    .map(|(i, j)| self.data.get(i) + other.data.get(j))
-            })
+        let strides1 = broadcast_strides(&self.strides, &self.shape, &shape);
+        let strides2 = broadcast_strides(&other.strides, &other.shape, &shape);
+
+        let data: Vec<_> = shape
+            .iter()
+            .map(|&x| 0..x)
+            .multi_cartesian_product()
+            .map(|index| self.get(&index, &strides1) + other.get(&index, &strides2))
             .collect();
-
-        let shape = broadcast_shape(&self.shape, &other.shape);
 
         Tensor::from_data(&data, &shape)
     }
@@ -645,20 +558,3 @@ impl<T: TensorElement> Display for Tensor<T> {
 // }
 
 // impl_binary_op!(Add, +, add);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_broadcast_actions() {
-        let actions = broadcast_actions(&[2], &[3, 3, 2]);
-        let expected = vec![
-            Broadcast::Splat(3),
-            Broadcast::Splat(3),
-            Broadcast::Split(2),
-        ];
-
-        assert_eq!(Ok(expected), actions);
-    }
-}

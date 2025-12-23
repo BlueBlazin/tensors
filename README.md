@@ -92,6 +92,7 @@ The local offset of `2` for axis 0 is just a `2 * a` contribution to the global 
 **2025-12-22**
 - Tried implementing broadcasting by myself.
 - I came up with an algorithm I'm calling split-splat-merge which creates a list of ranges whose lengths sum to the length of the flat data of the bigger tensor.
+- After coming with the very complex approach for broadcasting I gave up and asked the LLMs. I did have the right idea and split-splat correctly does what broadcasting should, but it's too explicit. Turns out broadcasting is extremely easy: just use a stride of 0 for those axes which need to be broadcast.
 
 **2025-12-21**
 - Tried implementing slicing with a new `Stride { start, value }` struct and a Tensor level offset for fixed indices.
