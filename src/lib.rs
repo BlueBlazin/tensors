@@ -1,9 +1,17 @@
 use std::cell::RefCell;
 use std::fmt::{Debug, Display};
-use std::ops::{Range, RangeFrom, RangeFull, RangeTo};
+use std::ops::{Add, Div, Mul, Range, RangeFrom, RangeFull, RangeTo, Sub};
 use std::rc::Rc;
 
-pub trait TensorElement: Copy + Default + Debug {
+pub trait TensorElement:
+    Copy
+    + Default
+    + Debug
+    + Add<Output = Self>
+    + Mul<Output = Self>
+    + Sub<Output = Self>
+    + Div<Output = Self>
+{
     fn zero() -> Self;
     fn one() -> Self;
 }
@@ -42,8 +50,17 @@ fn suffix_prod(data: &[usize]) -> Vec<usize> {
         .collect()
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Device {
     Cpu,
+}
+
+impl Display for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Device::Cpu => write!(f, "cpu"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -81,6 +98,12 @@ impl<T: TensorElement> Storage<T> {
     pub fn clone_storage(&self) -> Self {
         match self {
             Self::Cpu(data) => Self::Cpu(data.clone()),
+        }
+    }
+
+    pub fn device(&self) -> Device {
+        match self {
+            Self::Cpu(_) => Device::Cpu,
         }
     }
 }
@@ -130,6 +153,94 @@ impl From<RangeTo<usize>> for Ax {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Broadcast {
+    Split(usize),
+    Splat(usize),
+}
+
+fn broadcast_shape(shape: &[usize], other: &[usize]) -> Vec<usize> {
+    let m = shape.len();
+    let n = other.len();
+    let diff = m.abs_diff(n);
+
+    let mut new_shape: Vec<usize> = shape
+        .iter()
+        .rev()
+        .zip(other.iter().rev())
+        .map(|(&x, &y)| x.max(y))
+        .collect();
+
+    if m > n {
+        new_shape.extend_from_slice(&shape[0..diff]);
+    } else {
+        new_shape.extend_from_slice(&other[0..diff]);
+    }
+
+    new_shape.reverse();
+    new_shape
+}
+
+fn broadcast_actions(shape: &[usize], other: &[usize]) -> Result<Vec<Broadcast>, &'static str> {
+    let m = shape.len();
+    let n = other.len();
+
+    let mut actions = vec![];
+
+    let mut i: isize = m as isize - 1;
+    let mut j: isize = n as isize - 1;
+    while i >= 0 && j >= 0 {
+        if shape[i as usize] == other[j as usize] || other[j as usize] == 1 {
+            actions.push(Broadcast::Split(shape[i as usize]));
+        } else if shape[i as usize] == 1 {
+            actions.push(Broadcast::Splat(other[j as usize]));
+        } else {
+            return Err("Operands could not be broadcast together.");
+        }
+
+        i -= 1;
+        j -= 1;
+    }
+
+    while i >= 0 {
+        actions.push(Broadcast::Split(shape[i as usize]));
+        i -= 1;
+    }
+
+    while j >= 0 {
+        actions.push(Broadcast::Splat(other[j as usize]));
+        j -= 1;
+    }
+
+    actions.reverse();
+    Ok(actions)
+}
+
+/// Uses the splits and splats from a previous step to generate ranges/segments
+/// which broadcast the correct parts from the flat data array. The sum of the lengths
+/// of these ranges equals the max flat data length of both Tensors being broadcast.
+fn generate_segments(actions: &[Broadcast], length: usize) -> Vec<(usize, usize)> {
+    let mut segments = vec![(0, length - 1)];
+    for &action in actions {
+        let next_segments = segments
+            .iter()
+            .flat_map(|(start, end)| match action {
+                Broadcast::Split(n) => {
+                    let size = (end - start + 1) / n;
+                    (0..n)
+                        .map(|i| (start + i * size, start + i * size + size - 1))
+                        .collect::<Vec<_>>()
+                }
+                Broadcast::Splat(n) => std::iter::repeat((*start, *end)).take(n).collect(),
+            })
+            .collect();
+
+        segments = next_segments;
+    }
+
+    segments
+}
+
 #[macro_export]
 macro_rules! dims {
     ($($e:expr),* $(,)?) => {
@@ -138,7 +249,7 @@ macro_rules! dims {
 }
 
 #[derive(Debug)]
-pub struct Tensor<T: TensorElement, const N: usize> {
+pub struct Tensor<T: TensorElement> {
     data: Rc<Storage<T>>,
     shape: Vec<usize>,
     strides: Vec<usize>,
@@ -146,9 +257,9 @@ pub struct Tensor<T: TensorElement, const N: usize> {
     offset: usize,
 }
 
-impl<T: TensorElement, const N: usize> Tensor<T, N> {
-    pub fn fill(value: T, shape: &[usize; N]) -> Self {
-        assert_eq!(shape.len(), N);
+impl<T: TensorElement> Tensor<T> {
+    pub fn fill(value: T, shape: &[usize]) -> Self {
+        // assert_eq!(shape.len(), N);
         let length = shape.iter().product();
         let strides = suffix_prod(shape);
 
@@ -161,15 +272,15 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
         }
     }
 
-    pub fn zeros(shape: &[usize; N]) -> Self {
+    pub fn zeros(shape: &[usize]) -> Self {
         Self::fill(T::zero(), shape)
     }
 
-    pub fn ones(shape: &[usize; N]) -> Self {
+    pub fn ones(shape: &[usize]) -> Self {
         Self::fill(T::one(), shape)
     }
 
-    pub fn from_data(data: &[T], shape: &[usize; N]) -> Self {
+    pub fn from_data(data: &[T], shape: &[usize]) -> Self {
         let strides = suffix_prod(shape);
 
         Self {
@@ -181,7 +292,11 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
         }
     }
 
-    pub fn permute(&self, dims: &[usize; N]) -> Self {
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    pub fn permute(&self, dims: &[usize]) -> Self {
         let shape = dims.iter().map(|&i| self.shape[i]).collect();
         let strides = dims.iter().map(|&i| self.strides[i]).collect();
 
@@ -194,7 +309,7 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
         }
     }
 
-    pub fn reshape<const M: usize>(&self, shape: &[usize; M]) -> Tensor<T, M> {
+    pub fn reshape(&self, shape: &[usize]) -> Tensor<T> {
         assert_eq!(
             shape.iter().product::<usize>(),
             self.data.len(),
@@ -205,6 +320,8 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
         let data = if self.is_contiguous {
             Rc::clone(&self.data)
         } else {
+            // TODO: Instead of just cloning the data, we should clone and make it contiguous.
+            // Current approach is a BUG.
             Rc::new(self.data.clone_storage())
         };
 
@@ -217,7 +334,7 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
         }
     }
 
-    pub fn i(&self, index: &[usize; N]) -> T {
+    pub fn i(&self, index: &[usize]) -> T {
         assert!(
             index.iter().enumerate().all(|(i, n)| n < &self.shape[i]),
             "Index out of range. Invalid index {:?} for Tensor with shape {:?}.",
@@ -228,7 +345,7 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
         self.data.get(self.data_index(index))
     }
 
-    pub fn set(&mut self, index: &[usize; N], value: T) {
+    pub fn set(&mut self, index: &[usize], value: T) {
         assert!(
             index.iter().enumerate().all(|(i, n)| n < &self.shape[i]),
             "Index out of range. Invalid index {:?} for Tensor with shape {:?}.",
@@ -240,7 +357,7 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
     }
 
     #[inline(always)]
-    fn data_index(&self, index: &[usize; N]) -> usize {
+    fn data_index(&self, index: &[usize]) -> usize {
         self.offset
             + index
                 .iter()
@@ -249,7 +366,7 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
                 .sum::<usize>()
     }
 
-    pub fn slice<const M: usize>(&self, axes: &[Ax; N]) -> Tensor<T, M> {
+    pub fn slice(&self, axes: &[Ax]) -> Tensor<T> {
         let mut shape = vec![];
         let mut offset = self.offset;
         let mut strides = vec![];
@@ -289,9 +406,88 @@ impl<T: TensorElement, const N: usize> Tensor<T, N> {
             offset,
         }
     }
+
+    fn broadcast(&self, other_shape: &[usize]) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+        let m = self.data.len();
+        let n = other_shape.iter().product();
+
+        let self_actions = broadcast_actions(&self.shape, other_shape).unwrap();
+        let mut self_segments = generate_segments(&self_actions, m);
+
+        let other_actions = broadcast_actions(other_shape, &self.shape).unwrap();
+        let mut other_segments = generate_segments(&other_actions, n);
+
+        let mut self_chunks = vec![];
+        let mut other_chunks = vec![];
+
+        let mut start = 0;
+        let end = m.max(n);
+
+        let mut i = 0;
+        let mut j = 0;
+
+        assert_eq!(self_segments[0].0, 0);
+        assert_eq!(other_segments[0].0, 0);
+
+        while start < end {
+            let (left1, right1) = self_segments[i];
+            let (left2, right2) = other_segments[j];
+
+            let length1 = right1 - left1 + 1;
+            let length2 = right2 - left2 + 1;
+
+            if length1 < length2 {
+                self_chunks.push((left1, right1));
+                other_chunks.push((left2, left2 + length1 - 1));
+                other_segments[j].0 = left2 + length1 - 1;
+                i += 1;
+                start += length1;
+            } else if length1 > length2 {
+                other_chunks.push((left2, right2));
+                self_chunks.push((left1, left1 + length2 - 1));
+                self_segments[i].0 = left1 + length2 - 1;
+                j += 1;
+                start += length2;
+            } else {
+                self_chunks.push((left1, right1));
+                other_chunks.push((left2, right2));
+                i += 1;
+                j += 1;
+                start += length1;
+            }
+        }
+
+        (self_chunks, other_chunks)
+    }
+
+    pub fn add(&self, other: &Tensor<T>) -> Tensor<T> {
+        assert_eq!(
+            self.data.device(),
+            other.data.device(),
+            "Devices do not match. {} != {}",
+            self.data.device(),
+            other.data.device(),
+        );
+
+        let (chunks1, chunks2) = self.broadcast(&other.shape);
+
+        let data: Vec<_> = chunks1
+            .into_iter()
+            .zip(chunks2.into_iter())
+            .flat_map(|((start1, end1), (start2, end2))| {
+                (start1..end1 + 1)
+                    .zip(start2..end2 + 1)
+                    .map(|(i, j)| self.data.get(i) + other.data.get(j))
+            })
+            .collect();
+
+        let shape = broadcast_shape(&self.shape, &other.shape);
+
+        Tensor::from_data(&data, &shape)
+    }
 }
 
-impl<T: TensorElement, const N: usize> Display for Tensor<T, N> {
+impl<T: TensorElement> Display for Tensor<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fn write_indent(f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
             for _ in 0..indent {
@@ -300,11 +496,7 @@ impl<T: TensorElement, const N: usize> Display for Tensor<T, N> {
             Ok(())
         }
 
-        fn elem_str<T: TensorElement, const N: usize>(
-            t: &Tensor<T, N>,
-            flat_idx: usize,
-            data_len: usize,
-        ) -> String {
+        fn elem_str<T: TensorElement>(t: &Tensor<T>, flat_idx: usize, data_len: usize) -> String {
             if flat_idx < data_len {
                 format!("{:?}", t.data.get(flat_idx))
             } else {
@@ -312,8 +504,8 @@ impl<T: TensorElement, const N: usize> Display for Tensor<T, N> {
             }
         }
 
-        fn max_width_axis<T: TensorElement, const N: usize>(
-            t: &Tensor<T, N>,
+        fn max_width_axis<T: TensorElement>(
+            t: &Tensor<T>,
             dim: usize,
             base: usize,
             data_len: usize,
@@ -340,8 +532,8 @@ impl<T: TensorElement, const N: usize> Display for Tensor<T, N> {
             best
         }
 
-        fn fmt_axis<T: TensorElement, const N: usize>(
-            t: &Tensor<T, N>,
+        fn fmt_axis<T: TensorElement>(
+            t: &Tensor<T>,
             dim: usize,
             base: usize,
             indent: usize,
@@ -453,3 +645,20 @@ impl<T: TensorElement, const N: usize> Display for Tensor<T, N> {
 // }
 
 // impl_binary_op!(Add, +, add);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_broadcast_actions() {
+        let actions = broadcast_actions(&[2], &[3, 3, 2]);
+        let expected = vec![
+            Broadcast::Splat(3),
+            Broadcast::Splat(3),
+            Broadcast::Split(2),
+        ];
+
+        assert_eq!(Ok(expected), actions);
+    }
+}

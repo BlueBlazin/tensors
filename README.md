@@ -89,6 +89,10 @@ The local offset of `2` for axis 0 is just a `2 * a` contribution to the global 
 
 ## Log
 
+**2025-12-22**
+- Tried implementing broadcasting by myself.
+- I came up with an algorithm I'm calling split-splat-merge which creates a list of ranges whose lengths sum to the length of the flat data of the bigger tensor.
+
 **2025-12-21**
 - Tried implementing slicing with a new `Stride { start, value }` struct and a Tensor level offset for fixed indices.
 - Realized that adding start on Stride is awkward.
