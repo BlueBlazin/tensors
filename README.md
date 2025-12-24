@@ -87,12 +87,37 @@ x * a + 2 * a + y * b + 7 * c
 ```
 The local offset of `2` for axis 0 is just a `2 * a` contribution to the global `offset`. This way, using just one offset per `Tensor`, we can handle slices.
 
+## Broadcasting
+
+Two tensors can be broadcasted to the same shape if, starting from the rightmost axis:
+1. The sizes match.
+2. One of the sizes is 1.
+
+In this case we can broadcast the axes with size 1 to the required size. For example:
+```py
+x.shape ==    [2, 1, 2]
+y.shape == [3, 1, 4, 2]
+
+result.shape == [3, 2, 4, 2]
+```
+Missing axes (after right aligning) are treated as having size 1. The implementation of this turned out to be surprisingly easy. We just need to set the corresponding strides to 0. In the above example:
+```py
+x.strides == [2, 2, 1]
+
+broadcast_strides(x.strides) == [0, 2, 0, 1]
+```
+
 ## Log
+
+**2025-12-24**
+-
+
+**2025-12-23**
+- After coming with the very complex approach for broadcasting I gave up and asked the LLMs. I did have the right idea and split-splat correctly does what broadcasting should, but it's too explicit. Turns out broadcasting is extremely easy: just use a stride of 0 for those axes which need to be broadcast.
 
 **2025-12-22**
 - Tried implementing broadcasting by myself.
 - I came up with an algorithm I'm calling split-splat-merge which creates a list of ranges whose lengths sum to the length of the flat data of the bigger tensor.
-- After coming with the very complex approach for broadcasting I gave up and asked the LLMs. I did have the right idea and split-splat correctly does what broadcasting should, but it's too explicit. Turns out broadcasting is extremely easy: just use a stride of 0 for those axes which need to be broadcast.
 
 **2025-12-21**
 - Tried implementing slicing with a new `Stride { start, value }` struct and a Tensor level offset for fixed indices.
