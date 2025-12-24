@@ -407,6 +407,18 @@ impl<T: TensorElement> Tensor<T> {
     binary_op!(sub, -);
     binary_op!(mul, *);
     binary_op!(div, /);
+
+    pub fn scalar_mul(&self, scalar: T) -> Tensor<T> {
+        let data: Vec<_> = self
+            .shape
+            .iter()
+            .map(|&x| 0..x)
+            .multi_cartesian_product()
+            .map(|index| self.i(&index) * scalar)
+            .collect();
+
+        Tensor::from_data(&data, &self.shape)
+    }
 }
 
 impl<T: TensorElement> Display for Tensor<T> {

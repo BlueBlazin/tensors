@@ -111,6 +111,7 @@ broadcast_strides(x.strides) == [0, 2, 0, 1]
 
 **2025-12-24**
 - Implement elementwise sub, mul, div.
+- Implement scalar multiplication.
 
 **2025-12-23**
 - After coming with the very complex approach for broadcasting I gave up and asked the LLMs. I did have the right idea and split-splat correctly does what broadcasting should, but it's too explicit. Turns out broadcasting is extremely easy: just use a stride of 0 for those axes which need to be broadcast.
