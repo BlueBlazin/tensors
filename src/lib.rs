@@ -204,6 +204,34 @@ macro_rules! dims {
     };
 }
 
+macro_rules! binary_op {
+    ($name:ident, $op:tt) => {
+        pub fn $name(&self, other: &Tensor<T>) -> Tensor<T> {
+            assert_eq!(
+                self.data.device(),
+                other.data.device(),
+                "Devices do not match. {} != {}",
+                self.data.device(),
+                other.data.device(),
+            );
+
+            let shape = broadcast_shape(&self.shape, &other.shape).unwrap();
+
+            let strides1 = broadcast_strides(&self.strides, &self.shape, &shape);
+            let strides2 = broadcast_strides(&other.strides, &other.shape, &shape);
+
+            let data: Vec<_> = shape
+                .iter()
+                .map(|&x| 0..x)
+                .multi_cartesian_product()
+                .map(|index| self.get(&index, &strides1) $op other.get(&index, &strides2))
+                .collect();
+
+            Tensor::from_data(&data, &shape)
+        }
+    };
+}
+
 #[derive(Debug)]
 pub struct Tensor<T: TensorElement> {
     data: Rc<Storage<T>>,
@@ -375,29 +403,10 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
-    pub fn add(&self, other: &Tensor<T>) -> Tensor<T> {
-        assert_eq!(
-            self.data.device(),
-            other.data.device(),
-            "Devices do not match. {} != {}",
-            self.data.device(),
-            other.data.device(),
-        );
-
-        let shape = broadcast_shape(&self.shape, &other.shape).unwrap();
-
-        let strides1 = broadcast_strides(&self.strides, &self.shape, &shape);
-        let strides2 = broadcast_strides(&other.strides, &other.shape, &shape);
-
-        let data: Vec<_> = shape
-            .iter()
-            .map(|&x| 0..x)
-            .multi_cartesian_product()
-            .map(|index| self.get(&index, &strides1) + other.get(&index, &strides2))
-            .collect();
-
-        Tensor::from_data(&data, &shape)
-    }
+    binary_op!(add, +);
+    binary_op!(sub, -);
+    binary_op!(mul, *);
+    binary_op!(div, /);
 }
 
 impl<T: TensorElement> Display for Tensor<T> {

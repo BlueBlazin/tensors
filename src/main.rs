@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let y: Tensor<f32> = Tensor::from_data(&vec![100.0, 200.0], &[2]);
 
-    let z = x.add(&y);
+    let z = x.div(&y);
 
     println!(
         "x.shape = {:?}, y.shape = {:?}, z.shape = {:?}",
