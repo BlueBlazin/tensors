@@ -1,5 +1,5 @@
+use crate::common::IndexGen;
 use crate::{Ax, Tensor, TensorElement};
-use itertools::Itertools;
 use std::collections::HashMap;
 
 pub fn parse(equation: &str) -> Result<(Vec<Vec<char>>, Vec<char>), &'static str> {
@@ -24,12 +24,15 @@ pub fn parse(equation: &str) -> Result<(Vec<Vec<char>>, Vec<char>), &'static str
                 }
             }
 
-            counts
+            let mut labels: Vec<_> = counts
                 .iter()
                 .filter(|&(_, &count)| count == 1)
                 .map(|(&label, _)| label)
-                .sorted()
-                .collect()
+                .collect();
+
+            labels.sort_unstable();
+
+            labels
         });
 
     match (first, second) {
@@ -72,84 +75,89 @@ pub fn einsum2<T: TensorElement>(
         .map(|(i, &label)| (label, i))
         .collect();
 
-    let data: Vec<_> = out_labels
-        .iter()
-        .map(|label| 0..label_to_size[label])
-        .multi_cartesian_product()
-        .map(|index| {
-            let x_index: Vec<_> = x_labels
-                .iter()
-                .map(|label| {
-                    if out_label_to_idx.contains_key(label) {
-                        Ax::Idx(index[out_label_to_idx[label]])
-                    } else {
-                        Ax::Range {
-                            start: Some(0),
-                            end: Some(label_to_size[label] - 1),
-                        }
+    let data: Vec<_> = IndexGen::new(
+        out_labels
+            .iter()
+            .map(|label| label_to_size[label])
+            .collect(),
+    )
+    .map_iter(|index| {
+        let x_index: Vec<_> = x_labels
+            .iter()
+            .map(|label| {
+                if out_label_to_idx.contains_key(label) {
+                    Ax::Idx(index[out_label_to_idx[label]])
+                } else {
+                    Ax::Range {
+                        start: Some(0),
+                        end: Some(label_to_size[label] - 1),
                     }
-                })
-                .collect();
+                }
+            })
+            .collect();
 
-            let y_index: Vec<_> = y_labels
-                .iter()
-                .map(|label| {
-                    if out_label_to_idx.contains_key(label) {
-                        Ax::Idx(out_label_to_idx[label])
-                    } else {
-                        Ax::Range {
-                            start: Some(0),
-                            end: Some(label_to_size[label] - 1),
-                        }
+        let y_index: Vec<_> = y_labels
+            .iter()
+            .map(|label| {
+                if out_label_to_idx.contains_key(label) {
+                    Ax::Idx(out_label_to_idx[label])
+                } else {
+                    Ax::Range {
+                        start: Some(0),
+                        end: Some(label_to_size[label] - 1),
                     }
-                })
-                .collect();
+                }
+            })
+            .collect();
 
-            let x_slice = x.slice(&x_index);
-            let y_slice = y.slice(&y_index);
+        let x_slice = x.slice(&x_index);
+        let y_slice = y.slice(&y_index);
 
-            let x_slice_labels: Vec<_> = x_labels
-                .iter()
-                .filter(|&label| !out_label_to_idx.contains_key(label))
-                .collect();
-            let y_slice_labels: Vec<_> = y_labels
-                .iter()
-                .filter(|&label| !out_label_to_idx.contains_key(label))
-                .collect();
+        let x_slice_labels: Vec<_> = x_labels
+            .iter()
+            .filter(|&label| !out_label_to_idx.contains_key(label))
+            .collect();
+        let y_slice_labels: Vec<_> = y_labels
+            .iter()
+            .filter(|&label| !out_label_to_idx.contains_key(label))
+            .collect();
 
-            let contractions: Vec<_> = x_slice_labels
-                .iter()
-                .chain(y_slice_labels.iter())
-                .map(|&&c| c)
-                .sorted()
-                .dedup()
-                .collect();
+        let mut contractions: Vec<_> = x_slice_labels
+            .iter()
+            .chain(y_slice_labels.iter())
+            .map(|&&c| c)
+            .collect();
 
-            let label_to_contraction_idx: HashMap<char, usize> = contractions
-                .iter()
-                .enumerate()
-                .map(|(i, &label)| (label, i))
-                .collect();
+        contractions.sort_unstable();
+        contractions.dedup();
 
+        let label_to_contraction_idx: HashMap<char, usize> = contractions
+            .iter()
+            .enumerate()
+            .map(|(i, &label)| (label, i))
+            .collect();
+
+        IndexGen::new(
             contractions
                 .iter()
-                .map(|label| 0..label_to_size[label])
-                .multi_cartesian_product()
-                .map(|contraction_index| {
-                    let x_slice_index: Vec<_> = x_slice_labels
-                        .iter()
-                        .map(|&label| contraction_index[label_to_contraction_idx[label]])
-                        .collect();
-                    let y_slice_index: Vec<_> = y_slice_labels
-                        .iter()
-                        .map(|&label| contraction_index[label_to_contraction_idx[label]])
-                        .collect();
+                .map(|label| label_to_size[label])
+                .collect(),
+        )
+        .map_iter(|contraction_index| {
+            let x_slice_index: Vec<_> = x_slice_labels
+                .iter()
+                .map(|&label| contraction_index[label_to_contraction_idx[label]])
+                .collect();
+            let y_slice_index: Vec<_> = y_slice_labels
+                .iter()
+                .map(|&label| contraction_index[label_to_contraction_idx[label]])
+                .collect();
 
-                    x_slice.i(&x_slice_index) * y_slice.i(&y_slice_index)
-                })
-                .sum()
+            x_slice.i(&x_slice_index) * y_slice.i(&y_slice_index)
         })
-        .collect();
+        .sum()
+    })
+    .collect();
 
     Tensor::from_data(&data, &shape)
 }

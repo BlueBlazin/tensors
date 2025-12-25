@@ -112,6 +112,10 @@ broadcast_strides(x.strides) == [0, 2, 0, 1]
 **2025-12-25 🎄🦌🛷✨**
 - Fixed a bug with `is_contiguous` for slices.
 - Added a method to turn a tensor into a contiguous tensor. This is needed for the new einsum.
+- Rewriting einsum2 with a more efficient implementation that follows pytorch, etc.
+- To get to the better einsum implementation, implemented several missing pieces such as `sum_dims`, `squeeze`, `unsqueeze`, etc.
+- Got rid of Itertools because of a important flaw in using `multi_cartesian_product` which Gemini 3.0 Pro pointed out: it can create billions of heap allocations. So now I've written a custom "odometer" for generating indices without a new heap allocation for each one.
+- Lots of help from AI this time around, but I've still tried to solve every problem by myself first before asking for critique / improvements.
 
 **2025-12-24**
 - Implemented elementwise sub, mul, div.
@@ -135,7 +139,6 @@ broadcast_strides(x.strides) == [0, 2, 0, 1]
 - Finally realized why only a Tensor level offset is required and per-stride (or per-index) start offsets are not (commutativity).
 - Implement slicing.
 - Implement better `Display` for `Tensor` with LLM help (this is the only LLM generated code because it was a very laborious task).
-
 
 **2025-12-20**
 - Moved to a simple `Storage` enum that can eventually support multiple devices (cpu, gpu, mps, etc.)

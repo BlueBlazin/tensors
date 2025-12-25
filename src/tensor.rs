@@ -1,4 +1,4 @@
-use itertools::Itertools;
+use crate::common::{IndexGen, IndexGenMap};
 use rand::Rng;
 use rand_distr::StandardNormal;
 use std::cell::RefCell;
@@ -225,11 +225,8 @@ macro_rules! binary_op {
             let strides1 = broadcast_strides(&self.strides, &self.shape, &shape);
             let strides2 = broadcast_strides(&other.strides, &other.shape, &shape);
 
-            let data: Vec<_> = shape
-                .iter()
-                .map(|&x| 0..x)
-                .multi_cartesian_product()
-                .map(|index| self.get(&index, &strides1) $op other.get(&index, &strides2))
+            let data: Vec<_> = IndexGen::new(shape.to_vec())
+                .map_iter(|index| self.get(&index, &strides1) $op other.get(&index, &strides2))
                 .collect();
 
             Tensor::from_data(&data, &shape)
@@ -339,12 +336,8 @@ impl<T: TensorElement> Tensor<T> {
                 offset: self.offset,
             }
         } else {
-            let data: Vec<T> = self
-                .shape
-                .iter()
-                .map(|&n| 0..n)
-                .multi_cartesian_product()
-                .map(|index| self.i(&index))
+            let data: Vec<T> = IndexGen::new(self.shape.to_vec())
+                .map_iter(|index| self.i(&index))
                 .collect();
 
             Tensor::from_data(&data, &self.shape)
@@ -457,23 +450,16 @@ impl<T: TensorElement> Tensor<T> {
     binary_op!(div, /);
 
     pub fn scalar_mul(&self, scalar: T) -> Tensor<T> {
-        let data: Vec<_> = self
-            .shape
-            .iter()
-            .map(|&x| 0..x)
-            .multi_cartesian_product()
-            .map(|index| self.i(&index) * scalar)
+        let data: Vec<_> = IndexGen::new(self.shape.to_vec())
+            .map_iter(|index| self.i(&index) * scalar)
             .collect();
 
         Tensor::from_data(&data, &self.shape)
     }
 
     pub fn sum(&self) -> T {
-        self.shape
-            .iter()
-            .map(|&x| 0..x)
-            .multi_cartesian_product()
-            .map(|index| self.i(&index))
+        IndexGen::new(self.shape.to_vec())
+            .map_iter(|index| self.i(&index))
             .sum()
     }
 
@@ -502,7 +488,9 @@ impl<T: TensorElement> Tensor<T> {
         let mut data = vec![T::zero(); shape.iter().product()];
 
         // Go over all input indices, use sum_strides to find output data index, add value to it.
-        for index in self.shape.iter().map(|&n| 0..n).multi_cartesian_product() {
+        let mut index_gen = IndexGen::new(self.shape.to_vec());
+
+        while let Some(index) = index_gen.next() {
             let out_data_index = index
                 .iter()
                 .enumerate()
