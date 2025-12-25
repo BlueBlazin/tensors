@@ -619,6 +619,22 @@ macro_rules! impl_binary_op {
     };
 }
 
+impl<T: TensorElement> Mul<T> for Tensor<T> {
+    type Output = Tensor<T>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        self.scalar_mul(rhs)
+    }
+}
+
+impl<T: TensorElement> Mul<T> for &Tensor<T> {
+    type Output = Tensor<T>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        self.scalar_mul(rhs)
+    }
+}
+
 impl_binary_op!(Add, +, add);
 impl_binary_op!(Sub, -, sub);
 impl_binary_op!(Mul, *, mul);
