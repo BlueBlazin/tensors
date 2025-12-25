@@ -4,7 +4,7 @@ use rand_distr::StandardNormal;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display};
 use std::iter::Sum;
-use std::ops::{Add, Div, Mul, Range, RangeFrom, RangeFull, RangeTo, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, Range, RangeFrom, RangeFull, RangeTo, Sub};
 use std::rc::Rc;
 
 pub trait TensorElement:
@@ -16,6 +16,7 @@ pub trait TensorElement:
     + Sub<Output = Self>
     + Div<Output = Self>
     + Sum
+    + AddAssign
 {
     fn zero() -> Self;
     fn one() -> Self;
@@ -295,8 +296,24 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
+    #[inline(always)]
     pub fn shape(&self) -> &[usize] {
         &self.shape
+    }
+
+    pub fn squeeze(&self) -> Self {
+        let new_shape: Vec<usize> = self.shape.to_vec().into_iter().filter(|&x| x > 1).collect();
+        self.reshape(&new_shape)
+    }
+
+    pub fn unsqueeze(&self, mut dim: isize) -> Self {
+        let mut new_shape = self.shape.to_vec();
+        if dim < 0 {
+            dim = dim + new_shape.len() as isize + 1;
+        }
+        new_shape.insert(dim as usize, 1);
+
+        self.reshape(&new_shape)
     }
 
     pub fn permute(&self, dims: &[usize]) -> Self {
@@ -312,29 +329,39 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
+    pub fn contiguous(&self) -> Tensor<T> {
+        if self.is_contiguous {
+            Tensor {
+                data: Rc::clone(&self.data),
+                shape: self.shape.to_vec(),
+                strides: self.strides.to_vec(),
+                is_contiguous: true,
+                offset: self.offset,
+            }
+        } else {
+            let data: Vec<T> = self
+                .shape
+                .iter()
+                .map(|&n| 0..n)
+                .multi_cartesian_product()
+                .map(|index| self.i(&index))
+                .collect();
+
+            Tensor::from_data(&data, &self.shape)
+        }
+    }
+
     pub fn reshape(&self, shape: &[usize]) -> Tensor<T> {
         assert_eq!(
             shape.iter().product::<usize>(),
-            self.data.len(),
+            self.shape.iter().product(),
             "Invalid shape"
         );
-        let strides = suffix_prod(shape);
 
-        let data = if self.is_contiguous {
-            Rc::clone(&self.data)
-        } else {
-            // TODO: Instead of just cloning the data, we should clone and make it contiguous.
-            // Current approach is a BUG.
-            Rc::new(self.data.clone_storage())
-        };
-
-        Tensor {
-            data,
-            shape: shape.to_vec(),
-            strides,
-            is_contiguous: true,
-            offset: self.offset,
-        }
+        let mut tensor = self.contiguous();
+        tensor.shape = shape.to_vec();
+        tensor.strides = suffix_prod(shape);
+        tensor
     }
 
     #[inline]
@@ -413,11 +440,13 @@ impl<T: TensorElement> Tensor<T> {
             }
         }
 
+        let is_contiguous = strides == suffix_prod(&shape);
+
         Tensor {
             data: Rc::clone(&self.data),
             shape,
             strides,
-            is_contiguous: self.is_contiguous,
+            is_contiguous,
             offset,
         }
     }
@@ -446,6 +475,42 @@ impl<T: TensorElement> Tensor<T> {
             .multi_cartesian_product()
             .map(|index| self.i(&index))
             .sum()
+    }
+
+    pub fn sum_dims(&self, sum_dims: &[usize]) -> Self {
+        // Non-summing dims.
+        let keep_dims: Vec<usize> = (0..self.shape.len())
+            .filter(|dim| !sum_dims.contains(dim))
+            .collect();
+
+        // Output shape after summing.
+        let shape: Vec<usize> = keep_dims.iter().map(|&dim| self.shape[dim]).collect();
+
+        // Output strides.
+        let output_strides = suffix_prod(&shape);
+
+        // Special strides for summing with two cases:
+        // 1. If dim is a sum dim, stride = 0 (does not move pointer).
+        // 2. If dim is a keep dim, stride = output strides
+        let mut sum_strides = vec![0; self.shape.len()];
+
+        for (i, &dim) in keep_dims.iter().enumerate() {
+            sum_strides[dim] = output_strides[i];
+        }
+
+        // Output flat data buffer.
+        let mut data = vec![T::zero(); shape.iter().product()];
+
+        // Go over all input indices, use sum_strides to find output data index, add value to it.
+        for index in self.shape.iter().map(|&n| 0..n).multi_cartesian_product() {
+            let out_data_index = index
+                .iter()
+                .enumerate()
+                .fold(0usize, |acc, (i, &n)| acc + n * sum_strides[i]);
+            data[out_data_index] += self.i(&index);
+        }
+
+        Tensor::from_data(&data, &shape)
     }
 }
 

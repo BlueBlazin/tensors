@@ -109,12 +109,16 @@ broadcast_strides(x.strides) == [0, 2, 0, 1]
 
 ## Log
 
+**2025-12-25 🎄🦌🛷✨**
+- Fixed a bug with `is_contiguous` for slices.
+- Added a method to turn a tensor into a contiguous tensor. This is needed for the new einsum.
+
 **2025-12-24**
-- Implement elementwise sub, mul, div.
-- Implement scalar multiplication.
-- Implement v1 of einsum for 2 tensors. Right now I'm parsing the indices and then heavily relying on the fact that I can take slices and elementwise multiply then sum to get values for all non-contracting indices.
-- Implement sum and randn methods on Tensor.
-- Implement Add, Mul, Sub, Div traits for all combinations of {Tensor, &Tensor} lhs and rhs.
+- Implemented elementwise sub, mul, div.
+- Implemented scalar multiplication.
+- Implemented v1 of einsum for 2 tensors. Right now I'm parsing the indices and then heavily relying on the fact that I can take slices and elementwise multiply then sum to get values for all non-contracting indices.
+- Implemented sum and randn methods on Tensor.
+- Implemented Add, Mul, Sub, Div traits for all combinations of {Tensor, &Tensor} lhs and rhs.
 
 **2025-12-23**
 - After coming with the very complex approach for broadcasting I gave up and asked the LLMs. I did have the right idea and split-splat correctly does what broadcasting should, but it's too explicit. Turns out broadcasting is extremely easy: just use a stride of 0 for those axes which need to be broadcast.
