@@ -229,7 +229,7 @@ macro_rules! binary_op {
                 .map_iter(|index| self.get(&index, &strides1) $op other.get(&index, &strides2))
                 .collect();
 
-            Tensor::from_data(&data, &shape)
+            Tensor::from_data(&data, &shape).unwrap()
         }
     };
 }
@@ -278,19 +278,27 @@ impl<T: TensorElement> Tensor<T> {
             .map(|_| rng.sample::<f32, _>(StandardNormal))
             .collect();
 
-        Tensor::from_data(&data, shape)
+        Tensor::from_data(&data, shape).unwrap()
     }
 
-    pub fn from_data(data: &[T], shape: &[usize]) -> Self {
+    pub fn from_data(data: &[T], shape: &[usize]) -> Result<Self, String> {
+        if data.len() != shape.iter().product() {
+            return Err(format!(
+                "Invalid shape {:?} for data with length: {}",
+                shape,
+                data.len(),
+            ));
+        }
+
         let strides = suffix_prod(shape);
 
-        Self {
+        Ok(Self {
             data: Rc::new(Storage::new(data.to_vec(), Device::Cpu)),
             shape: shape.to_vec(),
             strides,
             is_contiguous: true,
             offset: 0,
-        }
+        })
     }
 
     pub(crate) fn restride(&self, strides: &[usize], shape: &[usize]) -> Self {
@@ -355,7 +363,7 @@ impl<T: TensorElement> Tensor<T> {
                 .map_iter(|index| self.i(&index))
                 .collect();
 
-            Tensor::from_data(&data, &self.shape)
+            Tensor::from_data(&data, &self.shape).unwrap()
         }
     }
 
@@ -469,7 +477,7 @@ impl<T: TensorElement> Tensor<T> {
             .map_iter(|index| self.i(&index) * scalar)
             .collect();
 
-        Tensor::from_data(&data, &self.shape)
+        Tensor::from_data(&data, &self.shape).unwrap()
     }
 
     pub fn sum(&self) -> T {
@@ -513,7 +521,7 @@ impl<T: TensorElement> Tensor<T> {
             data[out_data_index] += self.i(&index);
         }
 
-        Tensor::from_data(&data, &shape)
+        Tensor::from_data(&data, &shape).unwrap()
     }
 }
 

@@ -107,13 +107,97 @@ x.strides == [2, 2, 1]
 broadcast_strides(x.strides) == [0, 2, 0, 1]
 ```
 
+## Einsum
+
+The final boss of this tensor library was always going to be `einsum`. Einstein Summation Convention (or Einstein Notation) is a convenient shorthand way of specifying tensor products. In Einstein's original convention, any index which appears twice -- once as a subscript and once as superscript -- is summed over. In modern tensor libraries however you can do a lot more. PyTorch's documentation shows several examples:
+
+https://docs.pytorch.org/docs/stable/generated/torch.einsum.html
+
+Pytorch allows doing einsum over many tensors at once but I'm only supporting it for 1 or 2 tensors.
+
+There's many steps to implementing einsum and I had to solve all of these subproblems to finally be able to support it:
+- Ability to sum over only a specific list of dimensions (`sum_dim` method in my implementation).
+- Be able to create Tensors with shared data but a custom shape and strides.
+- Helper to "diagonalize" tensors with repeated indices (labels) in einsum equation.
+- Helper to align two tensors so they have the same labels from the equation and broadcast compatible shapes.
+- Reorder permutation of indices to match einsum equation output label ordering.
+
+### Summing Over Select Dims
+
+This can be done efficiently by going over the entire original tensor once. For each index in the original tensor, we need to map where the value lands in the new tensor with some dims summed and add the value to that location.
+
+To do this we first compute the new strides for the resulting shape after the summing is done.
+
+Then we compute special `sum_strides` which have the same length as the original tensor's shape and values equal to the output strides for those indices which don't get summed over (the only indices for which we even have output strides) and the others are 0.
+
+All that this does is when we are iterating over indices from the original tensor which are to be summed, the `data_index` doesn't change and so that place in the output data is summed over with the right values.
+
+### Diagonalizing
+
+Consider an einsum equation like `biii,biii->bi`. The `i` label appears more than once not only across the two tensors but even within one tensor.
+
+The solution is a reduction steps where we create a new tensor with an index of the form `bi`: so `biii` becomes `bi`. Once again the trick is to cleverly manipulate strides.
+
+Let's say the original tensor is `x` and after diagonalizing we return `y`. Indexing `y` becomes:
+```py
+y[b, i] = x[b, i, i, i]
+```
+How does the flat data index calculation look like?
+```
+data_index = offset + b * stride0 + i * stride1 + i * stride2 + i * stride3
+= offset + b * stride0 + i * (stride1 + stride2 + stride3)
+```
+
+So, the strides of `y` in terms of the strides of `x` are just `[stride0, stride1 + stride2 + stride3]`. And the shape changes as well.
+
+So diagonalizing just becomes figuring out the repeated indices and then returning a new tensor with the correct new shape and new strides.
+
+### Alignment
+
+To do an einsum over two tensors we rely on broadcasting. But for that their shapes first need to be broadcastable. This is achieved in the alignment step.
+
+If the einsum equation labels for `x` and `y` are `ijbi` and `jbk` with shapes e.g. `[3, 4, 10, 3]` and `[4, 10, 2]`, then we first need to normalize them by:
+1. Combining and sorting the labels alphabetically -- `'b', 'i', 'i', 'j', 'k'`.
+2. Reshaping the tensors by adding extra dimensions of size `1` for any missing labels.
+3. Permuting the tensor so the dimensions are ordered according to the sorted labels.
+
+In the previous example, this plays out as follows. The labels are sorted:
+```
+['i', 'j', 'b', 'i', 'j', 'k'] -> ['b', 'i', 'i', 'j', 'k']
+```
+Note how the `'i'`s are repeated because they appeared twice in `x`.
+
+The reshape is computed for `x`:
+```py
+new_shape: [3, 4, 10, 3, 1]
+```
+The last dim is 1 because we needed to add a dim for the missing `k`. At this point the tensor is only reshaped. Next the indices are permuted to match the ordered labels:
+```py
+new_shape: [10, 3, 3, 4, 1]
+``` 
+
+The same alignment is done for `y` as well, whose new shape becomes:
+```py
+new_shape_y: [10, 1, 1, 4, 2]
+```
+
+These aren't the same shapes but they are broadcastable!
+
+### Putting it all together
+
+Once diagonalizing and alignment are done, einsum2 reduces to multiplying `x` and `y`, summing over the contraction dimensions, and repermuting to match the expected output label ordering.
+
+Einsum for just 1 input is almost identical but there is not alignment steps and no broadcast product. Instead we just do the sum and permute to match output ordering. This handles usecases like `einsum!('ij->ji')`.
+
 ## Log
 
 **2025-12-27**
-
+- Finally implemented einsum2 properly by working out diagonalizing. It turned out to just be about setting a custom shape and strides.
+- Implemented einsum1 and with it, finished einsum and this project.
 
 **2025-12-26**
 - The nightmare of implementing einsum continues. It's just coding problem after coding problem. Whoever told you you don't find leetcode problems irl lied to you.
+- Re-implemented einsum almost right, but only missing a diagonalizing step.
 
 **2025-12-25 🎄🦌🛷✨**
 - Fixed a bug with `is_contiguous` for slices.
