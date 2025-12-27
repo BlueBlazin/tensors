@@ -293,7 +293,7 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
-    pub fn restride(&self, strides: &[usize], shape: &[usize]) -> Self {
+    pub(crate) fn restride(&self, strides: &[usize], shape: &[usize]) -> Self {
         Self {
             data: Rc::clone(&self.data),
             shape: shape.to_vec(),

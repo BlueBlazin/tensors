@@ -1,5 +1,5 @@
-use crate::{Ax, Tensor, TensorElement, common::IndexGen};
-use std::collections::{HashMap, HashSet};
+use crate::{Tensor, TensorElement};
+use std::collections::HashMap;
 
 pub fn parse(equation: &str) -> Result<(Vec<Vec<char>>, Vec<char>), &'static str> {
     let equation = equation.split_whitespace().collect::<String>();
@@ -122,52 +122,7 @@ pub fn einsum2<T: TensorElement>(
 pub fn diagonalize<T: TensorElement>(
     tensor: &Tensor<T>,
     labels: &[char],
-    // out_labels: &[char],
 ) -> (Tensor<T>, Vec<char>) {
-    // let keep_dims: Vec<usize> = out_labels
-    //     .iter()
-    //     .filter_map(|out_label| labels.iter().position(|label| label == out_label))
-    //     .collect();
-
-    // let keep_labels: Vec<char> = keep_dims.iter().map(|&dim| labels[dim]).collect();
-
-    // let unique_labels: Vec<char> = labels
-    //     .to_vec()
-    //     .into_iter()
-    //     .collect::<HashSet<char>>()
-    //     .into_iter()
-    //     .collect();
-
-    // let contraction_labels: Vec<&char> = unique_labels
-    //     .iter()
-    //     .filter(|&label| !keep_labels.contains(label))
-    //     .collect();
-    // let contraction_sizes: Vec<usize> = contraction_labels
-    //     .iter()
-    //     .map(|&clabel| shape[labels.iter().position(|label| label == clabel).unwrap()])
-    //     .collect();
-
-    // let result = IndexGen::new(contraction_sizes)
-    //     .map_iter(|index| {
-    //         let mut slice_index = vec![Ax::All; shape.len()];
-
-    //         for i in 0..slice_index.len() {
-    //             let label = labels[i];
-    //             if let Some(j) = contraction_labels
-    //                 .iter()
-    //                 .position(|&clabel| clabel == &label)
-    //             {
-    //                 slice_index[i] = Ax::Idx(index[j]);
-    //             }
-    //         }
-
-    //         tensor.slice(&slice_index)
-    //     })
-    //     .reduce(|acc, e| acc + e)
-    //     .unwrap();
-
-    // (result, keep_labels)
-
     let shape = tensor.shape();
     let strides = tensor.strides();
 
@@ -179,7 +134,7 @@ pub fn diagonalize<T: TensorElement>(
 
     for (label, dims) in &label_to_dims {
         assert!(
-            dims.iter().all(|&dim| shape[dim] == shape[0]),
+            dims.iter().all(|&dim| shape[dim] == shape[dims[0]]),
             "All dimensions for label '{}' don't have the same size.",
             label
         );
@@ -201,7 +156,7 @@ pub fn diagonalize<T: TensorElement>(
         new_strides.push(stride);
     }
 
-    (tensor.restride(&strides, &shape), new_labels)
+    (tensor.restride(&new_strides, &new_shape), new_labels)
 }
 
 /// Aligns `x_labels` with `y_labels` and returns an `Alignment`` containing the new shape and permutation

@@ -16,20 +16,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // println!("{:?}", z.shape());
 
-    // let x: Tensor<f32> = Tensor::from_data(&[1.0, 2.0, 3.0, 4.0], &[1, 2, 2]);
-    // let y: Tensor<f32> = Tensor::from_data(&[0.0, 100.0, 200.0, 0.0], &[1, 2, 2]);
+    let x: Tensor<f32> = Tensor::from_data(&[1.0, 2.0, 3.0, 4.0], &[1, 2, 2]);
+    let y: Tensor<f32> = Tensor::from_data(&[0.0, 100.0, 200.0, 0.0], &[1, 2, 2]);
 
-    // let z = einsum!("bii,bii->b", &x, &y);
+    let z = einsum!("bii,bii->b", &x, &y);
+
+    println!("{}", x);
+    println!("{}", y);
+    println!("{}", z);
+
+    // let x: Tensor<f32> = Tensor::from_data(&[1.0, 2.0, 3.0, 4.0], &[1, 2, 2]);
+
+    // let (z, labels) = diagonalize(&x, &['b', 'i', 'i']);
 
     // println!("{}", x);
-    // println!("{}", y);
     // println!("{}", z);
-
-    let x: Tensor<f32> = Tensor::from_data(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
-
-    let (z, _) = diagonalize(&x, &['i', 'i']);
-
-    println!("{:?}", z.shape());
+    // println!("{:?}", labels);
 
     Ok(())
 }
