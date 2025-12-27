@@ -1,4 +1,4 @@
-use crate::common::{IndexGen, IndexGenMap};
+use crate::common::IndexGen;
 use rand::Rng;
 use rand_distr::StandardNormal;
 use std::cell::RefCell;
@@ -293,9 +293,24 @@ impl<T: TensorElement> Tensor<T> {
         }
     }
 
+    pub fn restride(&self, strides: &[usize], shape: &[usize]) -> Self {
+        Self {
+            data: Rc::clone(&self.data),
+            shape: shape.to_vec(),
+            strides: strides.to_vec(),
+            is_contiguous: false,
+            offset: self.offset,
+        }
+    }
+
     #[inline(always)]
     pub fn shape(&self) -> &[usize] {
         &self.shape
+    }
+
+    #[inline(always)]
+    pub fn strides(&self) -> &[usize] {
+        &self.strides
     }
 
     pub fn squeeze(&self) -> Self {

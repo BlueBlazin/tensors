@@ -109,6 +109,12 @@ broadcast_strides(x.strides) == [0, 2, 0, 1]
 
 ## Log
 
+**2025-12-27**
+
+
+**2025-12-26**
+- The nightmare of implementing einsum continues. It's just coding problem after coding problem. Whoever told you you don't find leetcode problems irl lied to you.
+
 **2025-12-25 🎄🦌🛷✨**
 - Fixed a bug with `is_contiguous` for slices.
 - Added a method to turn a tensor into a contiguous tensor. This is needed for the new einsum.
