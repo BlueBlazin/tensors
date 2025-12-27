@@ -194,6 +194,7 @@ Einsum for just 1 input is almost identical but there is not alignment steps and
 **2025-12-27**
 - Finally implemented einsum2 properly by working out diagonalizing. It turned out to just be about setting a custom shape and strides.
 - Implemented einsum1 and with it, finished einsum and this project.
+- Implemented standard matrix multiplication (`Tensor::mm`). Nothing fancy here.
 
 **2025-12-26**
 - The nightmare of implementing einsum continues. It's just coding problem after coding problem. Whoever told you you don't find leetcode problems irl lied to you.
