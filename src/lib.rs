@@ -1,6 +1,6 @@
 mod common;
-mod einsum;
-mod tensor;
+pub mod einsum;
+pub mod tensor;
 
 pub use einsum::*;
 pub use tensor::*;

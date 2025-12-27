@@ -205,7 +205,7 @@ fn broadcast_strides(strides: &[usize], shape: &[usize], target_shape: &[usize])
 #[macro_export]
 macro_rules! dims {
     ($($e:expr),* $(,)?) => {
-        &[$(Ax::from($e)),*]
+        &[$($crate::tensor::Ax::from($e)),*]
     };
 }
 

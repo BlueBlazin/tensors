@@ -47,6 +47,45 @@ struct Alignment {
     new_labels: Vec<char>,
 }
 
+pub fn einsum1<T: TensorElement>(
+    x: &Tensor<T>,
+    x_labels: &[char],
+    out_labels: &[char],
+) -> Tensor<T> {
+    // Diagonalize `x`.
+    let (x, x_labels) = diagonalize(x, x_labels);
+
+    let contraction_labels: Vec<&char> = x_labels
+        .iter()
+        .filter(|&label| !out_labels.contains(label))
+        .collect();
+
+    let contraction_dims: Vec<usize> = x_labels
+        .iter()
+        .enumerate()
+        .filter(|(_, label)| contraction_labels.contains(label))
+        .map(|(dim, _)| dim)
+        .collect();
+
+    let keep_dims: Vec<usize> = x_labels
+        .iter()
+        .enumerate()
+        .filter(|(_, label)| !contraction_labels.contains(label))
+        .map(|(dim, _)| dim)
+        .collect();
+
+    let keep_labels: Vec<char> = keep_dims.iter().map(|&dim| x_labels[dim]).collect();
+
+    let result = x.sum_dims(&contraction_dims);
+
+    // Find permutation order to match out_labels order again.
+    let mut reorder_permutation: Vec<usize> = (0..keep_labels.len()).collect();
+    reorder_permutation
+        .sort_by_key(|&i| out_labels.iter().position(|label| label == &keep_labels[i]));
+
+    result.permute(&reorder_permutation)
+}
+
 pub fn einsum2<T: TensorElement>(
     x: &Tensor<T>,
     x_labels: &[char],
@@ -140,18 +179,20 @@ pub fn diagonalize<T: TensorElement>(
         );
     }
 
-    let mut new_labels = Vec::new();
+    let mut new_labels: Vec<char> = label_to_dims.keys().cloned().collect();
+    new_labels.sort_unstable();
+
     let mut new_shape = Vec::new();
     let mut new_strides = Vec::new();
 
-    for (label, size, stride) in label_to_dims.into_iter().map(|(label, dims)| {
+    for (size, stride) in new_labels.iter().map(|label| {
+        let dims = &label_to_dims[label];
+
         (
-            label,
             shape[dims[0]],
             dims.iter().map(|&dim| strides[dim]).sum::<usize>(),
         )
     }) {
-        new_labels.push(label);
         new_shape.push(size);
         new_strides.push(stride);
     }
@@ -323,13 +364,13 @@ fn count(labels: &[char]) -> HashMap<char, usize> {
 #[macro_export]
 macro_rules! einsum {
     ($equation:literal, $x:expr, $y:expr) => {{
-        let (input_labels, out_labels) = parse($equation).unwrap();
-        einsum2($x, &input_labels[0], $y, &input_labels[1], &out_labels)
+        let (input_labels, out_labels) = $crate::einsum::parse($equation).unwrap();
+        $crate::einsum::einsum2($x, &input_labels[0], $y, &input_labels[1], &out_labels)
     }};
-    ($equation:literal, $x:expr) => {
-        // einsum1($equation, $x)
-        unimplemented!()
-    };
+    ($equation:literal, $x:expr) => {{
+        let (input_labels, out_labels) = $crate::einsum::parse($equation).unwrap();
+        $crate::einsum::einsum1($x, &input_labels[0], &out_labels)
+    }};
 }
 
 #[cfg(test)]
