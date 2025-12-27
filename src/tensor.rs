@@ -317,7 +317,7 @@ impl<T: TensorElement> Tensor<T> {
     }
 
     #[inline(always)]
-    pub fn strides(&self) -> &[usize] {
+    pub(crate) fn strides(&self) -> &[usize] {
         &self.strides
     }
 
@@ -409,6 +409,47 @@ impl<T: TensorElement> Tensor<T> {
         self.data.set(self.data_index(index), value);
     }
 
+    pub fn mm(&self, other: &Tensor<T>) -> Result<Tensor<T>, String> {
+        if self.shape.len() != 2 {
+            return Err("self must be a matrix".to_string());
+        }
+        if other.shape.len() != 2 {
+            return Err("other must be a matrix".to_string());
+        }
+        if self.shape[1] != other.shape[0] {
+            return Err(format!(
+                "Shapes {:?} and {:?} are not compatible for matrix multiplication.",
+                self.shape, other.shape
+            ));
+        }
+
+        let shape = vec![self.shape[0], other.shape[1]];
+
+        let self_strides = self.strides();
+        let other_strides = other.strides();
+
+        let k = self.shape[1];
+
+        let data: Vec<T> = IndexGen::new(shape.clone())
+            .map_iter(|index| {
+                let (i, j) = (index[0], index[1]);
+
+                let c1 = self.offset + i * self_strides[0];
+                let c2 = other.offset + j * other_strides[1];
+
+                let s1 = self.strides[1];
+                let s2 = other.strides[0];
+
+                // Index (i, j) of result matrix is the dot product of row i of self and col j of other.
+                (0..k)
+                    .map(|n| self.data.get(c1 + n * s1) * other.data.get(c2 + n * s2))
+                    .sum()
+            })
+            .collect();
+
+        Tensor::from_data(&data, &shape)
+    }
+
     #[inline(always)]
     fn data_index(&self, index: &[usize]) -> usize {
         self.broadcast_data_index(index, &self.strides)
@@ -473,7 +514,7 @@ impl<T: TensorElement> Tensor<T> {
     binary_op!(div, /);
 
     pub fn scalar_mul(&self, scalar: T) -> Tensor<T> {
-        let data: Vec<_> = IndexGen::new(self.shape.to_vec())
+        let data: Vec<T> = IndexGen::new(self.shape.to_vec())
             .map_iter(|index| self.i(&index) * scalar)
             .collect();
 
